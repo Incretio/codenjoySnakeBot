@@ -29,8 +29,10 @@ import com.codenjoy.dojo.services.Point;
 import com.codenjoy.dojo.services.PointImpl;
 import com.codenjoy.dojo.snake.model.Elements;
 
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * User: oleksandr.baglai
@@ -38,47 +40,17 @@ import java.util.List;
  * Time: 12:07 AM
  */
 public class Board extends AbstractBoard<Elements> {
-    private int[][] sumField;
+    private final int MAX_VALUE = 999999;
+    private int MAX_SNAKE_LENGTH = 1000;
+    public int REMAINING_STEPS = 9;
 
-    private class PointWithValue extends PointImpl {
-        private int value;
-
-        public PointWithValue(int x, int y) {
-            super(x, y);
-            this.value = value;
-        }
-
-        public PointWithValue(Point point) {
-            super(point);
-        }
-
-        public int getValue() {
-            return value;
-        }
-
-        public void setValue(int value) {
-            this.value = value;
-        }
-
-        public int compareValueTo(PointWithValue o) {
-            return this.getValue() - o.getValue();
-        }
-
-        public double compareDistanceTo(PointWithValue o, PointWithValue toPoint) {
-            return this.distance(toPoint) - o.distance(toPoint);
-        }
-
-        @Override
-        public String toString(){
-            return "X = " + this.getX() + "; Y = " + this.getY();
-        }
-
-        public void print(){
-            System.out.println(this.toString());
-        }
+    public Board() {
     }
 
+    private int[][] sumField;
+
     public void calcSumField() {
+        System.out.println("calc");
         int height = getField().length;
         int width = getField()[0].length;
         sumField = new int[height][width];
@@ -91,6 +63,10 @@ public class Board extends AbstractBoard<Elements> {
                         Elements.HEAD_DOWN,
                         Elements.HEAD_LEFT,
                         Elements.HEAD_RIGHT,
+                        //Elements.TAIL_END_UP,
+                        //Elements.TAIL_END_DOWN,
+                        //Elements.TAIL_END_LEFT,
+                        //Elements.TAIL_END_RIGHT,
                         Elements.TAIL_HORIZONTAL,
                         Elements.TAIL_VERTICAL,
                         Elements.TAIL_LEFT_DOWN,
@@ -98,13 +74,27 @@ public class Board extends AbstractBoard<Elements> {
                         Elements.TAIL_RIGHT_DOWN,
                         Elements.TAIL_RIGHT_UP
                 )) {
-                    sumField[x][y] = 99;
+                    sumField[x][y] = MAX_VALUE;
                 } else if (isAt(x, y, Elements.BAD_APPLE)) {
-                    sumField[x][y] = 50;
+                    if (getSnake().size() > MAX_SNAKE_LENGTH) {
+                        sumField[x][y] = -MAX_VALUE;
+                    } else {
+                        sumField[x][y] = 50;
+                    }
+
                 } else if (isAt(x, y, Elements.GOOD_APPLE)) {
-                    sumField[x][y] = -1;
+                    if (getSnake().size() > MAX_SNAKE_LENGTH) {
+                        sumField[x][y] = 50;
+                    } else {
+                        sumField[x][y] = -MAX_VALUE;
+                    }
                 } else {
-                    Point apple = getApples().get(0);
+                    Point apple;
+                    if (getSnake().size() > MAX_SNAKE_LENGTH) {
+                        apple = getStones().get(0);
+                    } else {
+                        apple = getApples().get(0);
+                    }
                     for (int potentialValue = 0; potentialValue < getField().length; potentialValue++) {
                         boolean checkX1Value = Math.abs(x - apple.getX()) - 1 <= potentialValue;
                         boolean checkY1Value = Math.abs(y - apple.getY()) - 1 == potentialValue;
@@ -118,73 +108,307 @@ public class Board extends AbstractBoard<Elements> {
             }
 
         }
-        ClientUtils.printField(sumField);
     }
 
-    public Direction getNextStep() {
+
+    static class SnakePath implements Comparable<SnakePath> {
+        public String direction;
+        public int stepSum;
+        public int stepToEaten;
+
+        public SnakePath(String direction, int stepSum, int stepToEaten) {
+            this.direction = direction;
+            this.stepSum = stepSum;
+            this.stepToEaten = stepToEaten;
+        }
+
+        @Override
+        public String toString() {
+            return "direction = " + direction + ", stepSum = " + stepSum + ", stepToEaten = " + stepToEaten;
+        }
+
+        @Override
+        public int compareTo(SnakePath o) {
+            if (stepToEaten != o.stepToEaten) {
+                return stepToEaten - o.stepToEaten;
+            } else {
+                return stepSum - o.stepSum;
+            }
+        }
+
+        public static void main(String[] args) {
+            List<SnakePath> list = new ArrayList<>();
+
+            list.add(new SnakePath("", -99982, 11));
+            list.add(new SnakePath("", Integer.MAX_VALUE, Integer.MAX_VALUE));
+
+            System.out.println(list.get(0).compareTo(list.get(1)));
+        }
+    }
+
+    public int[][] copyArray(int[][] array) {
+        int[][] copy = new int[array.length][array[0].length]; // new top-level array of same size
+        for (
+                int i = 0;
+                i < array.length; i++)
+
+        {
+            copy[i] = array[i].clone();
+        }
+        return copy;
+    }
+
+    public Direction getNextStep(final int remainingSteps) {
+        System.out.println("goNextStep");
         Point head = getHead();
-        PointWithValue apple = new PointWithValue(getApples().get(0).getX(), getApples().get(0).getY());
-        apple.setValue(sumField[apple.getX()][apple.getY()]);
+        final int x = head.getX();
+        final int y = head.getY();
+        Point apple;
+        if (getSnake().size() > MAX_SNAKE_LENGTH) {
+            apple = getStones().get(0);
+        } else {
+            apple = getApples().get(0);
+        }
 
-        PointWithValue upStep = new PointWithValue(head.getX(), head.getY() - 1);
-        upStep.setValue(sumField[upStep.getX()][upStep.getY()]);
+        final List<SnakePath> snakePaths = Collections.synchronizedList(new ArrayList<SnakePath>());
+        final List<SnakePath> snakePathsLeft = Collections.synchronizedList(new ArrayList<SnakePath>());
+        final List<SnakePath> snakePathsUp = Collections.synchronizedList(new ArrayList<SnakePath>());
+        final List<SnakePath> snakePathsRight = Collections.synchronizedList(new ArrayList<SnakePath>());
+        final List<SnakePath> snakePathsDown = Collections.synchronizedList(new ArrayList<SnakePath>());
 
-        PointWithValue downStep = new PointWithValue(head.getX(), head.getY() + 1);
-        downStep.setValue(sumField[downStep.getX()][downStep.getY()]);
 
-        PointWithValue leftStep = new PointWithValue(head.getX() - 1, head.getY());
-        leftStep.setValue(sumField[leftStep.getX()][leftStep.getY()]);
-
-        PointWithValue rightStep = new PointWithValue(head.getX() + 1, head.getY());
-        rightStep.setValue(sumField[rightStep.getX()][rightStep.getY()]);
-
-        PointWithValue nextStepPoint = upStep;
-
-        rightStep.print();
-        if (downStep.compareValueTo(nextStepPoint) <= 0) {
-            if (downStep.compareValueTo(nextStepPoint) == 0){
-                nextStepPoint = (downStep.compareDistanceTo(nextStepPoint, apple) < 0) ? downStep : nextStepPoint;
-            } else {
-                nextStepPoint = downStep;
+        Thread thread1 = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                getNextStep(copyArray(sumField), snakePathsLeft, x - 1, y, x, y, 1, 0, -1, "LEFT", remainingSteps);
+                System.out.println("thread1 done");
             }
-            rightStep.print();
-        }
+        });
 
-        if (leftStep.compareValueTo(nextStepPoint) <= 0) {
-            if (leftStep.compareValueTo(nextStepPoint) == 0){
-                nextStepPoint = (leftStep.compareDistanceTo(nextStepPoint, apple) < 0) ? leftStep : nextStepPoint;
-            } else {
-                nextStepPoint = leftStep;
+        Thread thread2 = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                getNextStep(copyArray(sumField), snakePathsUp, x, y - 1, x, y, 1, 0, -1, "UP", remainingSteps);
+                System.out.println("thread2 done");
             }
-            rightStep.print();
-        }
-
-        if (rightStep.compareValueTo(nextStepPoint) <= 0) {
-            if (rightStep.compareValueTo(nextStepPoint) == 0){
-                nextStepPoint = (rightStep.compareDistanceTo(nextStepPoint, apple) < 0) ? rightStep : nextStepPoint;
-            } else {
-                nextStepPoint = rightStep;
+        });
+        Thread thread3 = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                getNextStep(copyArray(sumField), snakePathsRight, x + 1, y, x, y, 1, 0, -1, "RIGHT", remainingSteps);
+                System.out.println("thread3 done");
             }
-            rightStep.print();
+        });
+        Thread thread4 = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                getNextStep(copyArray(sumField), snakePathsDown, x, y + 1, x, y, 1, 0, -1, "DOWN", remainingSteps);
+                System.out.println("thread4 done");
+            }
+        });
+
+        Date startDate = new Date();
+
+
+//        if (this.getSnake().size() / 2 < countOfSpace(x - 1, y, copyArray(sumField), 0)) {
+//            thread1.start();
+//        }
+//        if (this.getSnake().size() / 2 < countOfSpace(x, y - 1, copyArray(sumField), 0)) {
+//            thread2.start();
+//        }
+//        if (this.getSnake().size() / 2 < countOfSpace(x + 1, y, copyArray(sumField), 0)) {
+//            thread3.start();
+//        }
+//        if (this.getSnake().size() / 2 < countOfSpace(x, y + 1, copyArray(sumField), 0)) {
+//            thread4.start();
+//        }
+
+        //ExecutorService service = Executors.newFixedThreadPool(4);
+        if (isSeeTail(x - 1, y, copyArray(sumField))) {
+            //service.submit(thread1);
+            thread1.start();
+        }
+        if (isSeeTail(x, y - 1, copyArray(sumField))) {
+            //service.submit(thread2);
+            thread2.start();
+        }
+        if (isSeeTail(x + 1, y, copyArray(sumField))) {
+            //service.submit(thread3);
+            thread3.start();
+        }
+        if (isSeeTail(x, y + 1, copyArray(sumField))) {
+            //service.submit(thread4);
+            thread4.start();
         }
 
-        nextStepPoint.print();
+        /*try {
+            service.wait(800);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }*/
 
-        if (head.getX() < nextStepPoint.getX()) {
-            return Direction.RIGHT;
+        try {
+            thread1.join();
+            thread2.join();
+            thread3.join();
+            thread4.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
-        if (head.getX() > nextStepPoint.getX()) {
+
+        snakePaths.addAll(snakePathsLeft);
+        snakePaths.addAll(snakePathsUp);
+        snakePaths.addAll(snakePathsRight);
+        snakePaths.addAll(snakePathsDown);
+        if (snakePaths.size() == 0) {
+            return getNextStep(remainingSteps - 1);
+        }
+
+        System.out.println("time = " + (new Date().getTime() - startDate.getTime()));
+
+        System.out.println("size = " + snakePaths.size());
+        SnakePath minSnakePath = Collections.min(snakePaths);
+        System.out.println(minSnakePath);
+        String direction = minSnakePath.direction;
+
+        if (direction.equals("LEFT")) {
             return Direction.LEFT;
         }
-        if (head.getY() > nextStepPoint.getY()) {
+        if (direction.equals("UP")) {
             return Direction.UP;
         }
-        if (head.getY() < nextStepPoint.getY()) {
+        if (direction.equals("RIGHT")) {
+            return Direction.RIGHT;
+        }
+        if (direction.equals("DOWN")) {
             return Direction.DOWN;
         } else {
-            return Direction.DOWN;
+            if (remainingSteps < 1) {
+                return Direction.DOWN;
+            } else {
+                return getNextStep(remainingSteps - 1);
+
+            }
         }
+
     }
+
+    public List<SnakePath> getNextStep(
+            int[][] curSumField,
+            List<SnakePath> sums,
+            int newX, int newY,
+            int oldX, int oldY,
+            int stepCount, int stepSum, int stepToEaten,
+            String direction, int remainingSteps) {
+        if (curSumField[newX][newY] == MAX_VALUE || newX <= 0 || newX >= curSumField.length - 1 || newY <= 0 || newY >= curSumField.length - 1) {
+            return sums;
+        }
+
+        int newStepSum = curSumField[newX][newY] + stepSum;
+        if (stepCount > remainingSteps) {
+            sums.add(new SnakePath(direction, newStepSum, (stepToEaten < 0) ? MAX_VALUE : stepToEaten));
+            return sums;
+        }
+
+        int curFieldValue = curSumField[newX][newY];
+        curSumField[newX][newY] = MAX_VALUE;
+
+
+        // условие нужно, но с ним долго
+        /*if (getSnake().size() > MAX_SNAKE_LENGTH) {
+            if ((stepToEaten < 0) && (this.getStones().get(0).getX() == newX) && (this.getStones().get(0).getY() == newY)) {
+                stepToEaten = stepCount;
+            }
+        } else */
+        {
+            if ((stepToEaten < 0) && (this.getApples().get(0).getX() == newX) && (this.getApples().get(0).getY() == newY)) {
+                stepToEaten = stepCount;
+            }
+        }
+
+
+        int nextStepCount = stepCount + 1;
+
+
+//        if (!((oldX == newX - 1) && (oldY == newY))) {
+//            if (stepCount < 3 || this.getSnake().size() / 2 < countOfSpace(newX - 1, newY, copyArray(curSumField), 0)) {
+//                getNextStep(curSumField, sums, newX - 1, newY, newX, newY, nextStepCount, newStepSum, stepToEaten, direction);
+//            }
+//        }
+//        if (!((oldX == newX) && (oldY == newY - 1))) {
+//            if (stepCount < 3 || this.getSnake().size() / 2 < countOfSpace(newX, newY - 1, copyArray(curSumField), 0)) {
+//                getNextStep(curSumField, sums, newX, newY - 1, newX, newY, nextStepCount, newStepSum, stepToEaten, direction);
+//            }
+//        }
+//        if (!((oldX == newX + 1) && (oldY == newY))) {
+//            if (stepCount < 3 || this.getSnake().size() / 2 < countOfSpace(newX + 1, newY, copyArray(curSumField), 0)) {
+//                getNextStep(curSumField, sums, newX + 1, newY, newX, newY, nextStepCount, newStepSum, stepToEaten, direction);
+//            }
+//        }
+//        if (!((oldX == newX) && (oldY == newY + 1))) {
+//            if (stepCount < 3 || this.getSnake().size() / 2 < countOfSpace(newX, newY + 1, copyArray(curSumField), 0)) {
+//                getNextStep(curSumField, sums, newX, newY + 1, newX, newY, nextStepCount, newStepSum, stepToEaten, direction);
+//            }
+//        }
+
+        if (!((oldX == newX - 1) && (oldY == newY))) {
+            if (isSeeTail(newX - 1, newY, copyArray(curSumField))) {
+                getNextStep(curSumField, sums, newX - 1, newY, newX, newY, nextStepCount, newStepSum, stepToEaten, direction, remainingSteps);
+            }
+        }
+        if (!((oldX == newX) && (oldY == newY - 1))) {
+            if (isSeeTail(newX, newY - 1, copyArray(curSumField))) {
+                getNextStep(curSumField, sums, newX, newY - 1, newX, newY, nextStepCount, newStepSum, stepToEaten, direction, remainingSteps);
+            }
+        }
+        if (!((oldX == newX + 1) && (oldY == newY))) {
+            if (isSeeTail(newX + 1, newY, copyArray(curSumField))) {
+                getNextStep(curSumField, sums, newX + 1, newY, newX, newY, nextStepCount, newStepSum, stepToEaten, direction, remainingSteps);
+            }
+        }
+        if (!((oldX == newX) && (oldY == newY + 1))) {
+            if (isSeeTail(newX, newY + 1, copyArray(curSumField))) {
+                getNextStep(curSumField, sums, newX, newY + 1, newX, newY, nextStepCount, newStepSum, stepToEaten, direction, remainingSteps);
+            }
+        }
+
+        curSumField[newX][newY] = curFieldValue;
+
+        return sums;
+    }
+
+    public boolean isSeeTail(int curX, int curY, int[][] field) {
+        if (isAt(curX, curY,
+                Elements.TAIL_END_DOWN,
+                Elements.TAIL_END_LEFT,
+                Elements.TAIL_END_UP,
+                Elements.TAIL_END_RIGHT)) {
+            return true;
+        } else if (field[curX][curY] == MAX_VALUE /*|| count > getSnake().size()*/) {
+            return false;
+        }
+
+        field[curX][curY] = MAX_VALUE;
+        boolean result;
+        result = isSeeTail(curX - 1, curY, field);
+        if (result) {
+            return true;
+        }
+        result = isSeeTail(curX + 1, curY, field);
+        if (result) {
+            return true;
+        }
+        result = isSeeTail(curX, curY - 1, field);
+        if (result) {
+            return true;
+        }
+        result = isSeeTail(curX, curY + 1, field);
+        if (result) {
+            return true;
+        }
+        return false;
+    }
+
 
     @Override
     public Elements valueOf(char ch) {
@@ -278,4 +502,5 @@ public class Board extends AbstractBoard<Elements> {
     public List<Point> getWalls() {
         return get(Elements.BREAK);
     }
+
 }

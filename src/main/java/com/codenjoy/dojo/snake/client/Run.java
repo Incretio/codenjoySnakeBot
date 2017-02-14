@@ -10,14 +10,15 @@ public class Run {
 
     public static void main(String[] args) {
         start(WebSocketRunner.Host.REMOTE,
-                new YourSolverVOne());
+                new YourSolverVOne(), "my_mail@gmail.com");
     }
 
-    public static void start(WebSocketRunner.Host server, Solver<Board>... solvers) {
+    public static void start(WebSocketRunner.Host server, Solver<Board> solver, String botName) {
         try {
-            WebSocketRunner.run(server, "incretio@gmail.com",
-                    solvers[0],
+            WebSocketRunner.run(server, botName,
+                    solver,
                     new Board());
+
         } catch (Exception e) {
             e.printStackTrace();
         }

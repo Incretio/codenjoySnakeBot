@@ -95,16 +95,5 @@ public class FieldWeights {
     private int getWeightNearApple(int x, int y) {
         Point apple = board.getApples().get(0);
         return Math.abs(apple.getX() - x) + Math.abs(apple.getY() - y);
-        // альтернативный вариант расстановки весов
-//        for (int potentialValue = 0; potentialValue < getBoardHeight(); potentialValue++) {
-//            boolean checkX1Value = Math.abs(x - apple.getX()) - 1 <= potentialValue;
-//            boolean checkY1Value = Math.abs(y - apple.getY()) - 1 == potentialValue;
-//            boolean checkX2Value = Math.abs(x - apple.getX()) - 1 == potentialValue;
-//            boolean checkY2Value = Math.abs(y - apple.getY()) - 1 <= potentialValue;
-//            if ((checkX1Value && checkY1Value) || (checkX2Value && checkY2Value)) {
-//                return potentialValue+1;
-//            }
-//        }
-//        return 0;
     }
 }
